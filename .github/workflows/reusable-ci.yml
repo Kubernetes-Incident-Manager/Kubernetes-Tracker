@@ -1,33 +1,218 @@
-name: Reusable CI Build and Push
+name: Reusable Service CI
 
 on:
   workflow_call:
     inputs:
       node_version:
+        description: "Node.js version"
         required: false
         type: string
         default: "18"
       image_name:
+        description: "Container image name without registry/org"
         required: true
         type: string
+      docker_context:
+        description: "Docker build context"
+        required: false
+        type: string
+        default: "."
+      dockerfile:
+        description: "Dockerfile path"
+        required: false
+        type: string
+        default: "Dockerfile"
+      run_trivy:
+        description: "Run Trivy image scan"
+        required: false
+        type: boolean
+        default: true
+      push_image:
+        description: "Push image to ACR"
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-push:
+  ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write # Required for Azure Login with OIDC
+
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Log in to Azure Container Registry
-        uses: azure/docker-login@v2
-        with:
-          login-server: ${{ secrets.ACR_LOGIN_SERVER }}
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
-      - name: Build and Push Docker Image
+      # ----------------------------
+      # Set ACR image reference
+      # ----------------------------
+      - name: Set image ref (ACR)
+        shell: bash
         run: |
-          IMAGE_TAG="sha-${GITHUB_SHA::7}"
-          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:${IMAGE_TAG} -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:latest .
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:${IMAGE_TAG}
-          docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:latest
+          ACR_NAME="${{ secrets.ACR_NAME }}"
+          OWNER_LOWER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          # Build IMAGE_REF using short SHA
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          echo "IMAGE_REF=${ACR_NAME}.azurecr.io/${{ inputs.image_name }}:sha-${SHORT_SHA}" >> "$GITHUB_ENV"
+
+      # ----------------------------
+      # Node setup (only if package.json exists)
+      # ----------------------------
+      - name: Check if package.json exists
+        id: check_package_json
+        shell: bash
+        run: |
+          if [ -f "package.json" ]; then
+            echo "has_package_json=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_package_json=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: ${{ steps.check_package_json.outputs.has_package_json == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+          cache: npm
+
+      - name: Install Dependencies
+        if: ${{ steps.check_package_json.outputs.has_package_json == 'true' }}
+        run: npm ci
+
+      - name: Lint
+        if: ${{ steps.check_package_json.outputs.has_package_json == 'true' }}
+        run: npm run lint --if-present
+
+      - name: Test
+        if: ${{ steps.check_package_json.outputs.has_package_json == 'true' }}
+        run: npm test --if-present
+
+      # ----------------------------
+      # Optional checks
+      # ----------------------------
+      - name: Resolve Optional Checks
+        id: checks
+        shell: bash
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          if [ -n "$SONAR_TOKEN" ] && [ -n "$SONAR_HOST_URL" ]; then
+            echo "run_sonar=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_sonar=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$SNYK_TOKEN" ]; then
+            echo "run_snyk=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_snyk=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -n "$WEBHOOK_URL" ]; then
+            echo "run_slack=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_slack=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: SonarQube Scan
+        if: ${{ steps.checks.outputs.run_sonar == 'true' }}
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+      - name: Snyk Scan
+        if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.check_package_json.outputs.has_package_json == 'true' }}
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+
+      # ----------------------------
+      # Azure Login + ACR Login
+      # ----------------------------
+      - name: Azure Login
+        if: ${{ inputs.push_image }}
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        if: ${{ inputs.push_image }}
+        run: |
+          az acr login --name ${{ secrets.ACR_NAME }}
+
+      # ----------------------------
+      # Build Docker image
+      # ----------------------------
+      - name: Build Docker Image
+        run: |
+          docker build \
+            -f "${{ inputs.dockerfile }}" \
+            -t "${IMAGE_REF}" \
+            "${{ inputs.docker_context }}"
+
+      # ----------------------------
+      # Security scan
+      # ----------------------------
+      - name: Trivy Scan
+        if: ${{ inputs.run_trivy }}
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          exit-code: 0
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+      # ----------------------------
+      # Push to ACR
+      # ----------------------------
+      - name: Push Image to ACR
+        if: ${{ inputs.push_image }}
+        run: |
+          docker push "${IMAGE_REF}"
+          # Tag and push latest tag as well
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          LATEST_REF=$(echo "${IMAGE_REF}" | sed "s|:sha-${SHORT_SHA}|:latest|g")
+          docker tag "${IMAGE_REF}" "${LATEST_REF}"
+          docker push "${LATEST_REF}"
+
+      # ----------------------------
+      # Slack notifications
+      # ----------------------------
+      - name: Slack Notify Success
+        if: ${{ success() && steps.checks.outputs.run_slack == 'true' }}
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "CI SUCCESS: ${{ github.repository }} on ${{ github.ref_name }} (${{ github.sha }}) -> ${{ env.IMAGE_REF }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+
+      - name: Slack Notify Failure
+        if: ${{ failure() && steps.checks.outputs.run_slack == 'true' }}
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": "CI FAILED: ${{ github.repository }} on ${{ github.ref_name }} (${{ github.sha }})"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
