@@ -128,6 +128,13 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ github.repository_owner }}-${{ inputs.image_name }}
+            -Dsonar.projectName=${{ inputs.image_name }}
+            -Dsonar.sources=.
+            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/.venv/**,**/__pycache__/**,**/tests/**
+            -Dsonar.python.version=3.11
 
       - name: Snyk Scan
         if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.check_package_json.outputs.has_package_json == 'true' }}
