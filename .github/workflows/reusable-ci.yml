@@ -1,18 +1,15 @@
-name: Reusable Build and Push
+name: Reusable CI Build and Push
 
 on:
   workflow_call:
     inputs:
+      node_version:
+        required: false
+        type: string
+        default: "18"
       image_name:
         required: true
         type: string
-    secrets:
-      ACR_LOGIN_SERVER:
-        required: true
-      ACR_USERNAME:
-        required: true
-      ACR_PASSWORD:
-        required: true
 
 jobs:
   build-and-push:
@@ -31,7 +28,6 @@ jobs:
       - name: Build and Push Docker Image
         run: |
           IMAGE_TAG="sha-${GITHUB_SHA::7}"
-          # Build image with short SHA and latest tags
           docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:${IMAGE_TAG} -t ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:latest .
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:${IMAGE_TAG}
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/${{ inputs.image_name }}:latest
