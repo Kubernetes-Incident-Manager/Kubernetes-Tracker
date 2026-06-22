@@ -167,9 +167,17 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: Snyk Scan (Node only)
+      - name: Snyk Scan (Node dependencies)
         if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.detect_tech.outputs.tech == 'node' }}
         uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+
+      - name: Snyk Scan (Python dependencies)
+        if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.detect_tech.outputs.tech == 'python' }}
+        uses: snyk/actions/python-3.8@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         with:
