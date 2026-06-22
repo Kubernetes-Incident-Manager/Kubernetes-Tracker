@@ -166,7 +166,8 @@ jobs:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
-            -Dsonar.projectKey=${{ github.repository_owner }}-${{ inputs.image_name }}
+            -Dsonar.organization=kubernetes-incident-manager
+            -Dsonar.projectKey=Kubernetes-Incident-Manager_${{ inputs.image_name }}
             -Dsonar.projectName=${{ inputs.image_name }}
             -Dsonar.sources=.
             -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/.venv/**,**/__pycache__/**,**/tests/**
