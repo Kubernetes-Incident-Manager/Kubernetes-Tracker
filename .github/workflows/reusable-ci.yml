@@ -54,6 +54,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Shallow clones should be disabled for a better relevancy of analysis
 
       # ----------------------------
       # Set ACR image reference
@@ -160,18 +162,10 @@ jobs:
 
       - name: SonarQube Scan
         if: ${{ steps.checks.outputs.run_sonar == 'true' }}
-        uses: SonarSource/sonarqube-scan-action@v2
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          args: >
-            -Dsonar.organization=kubernetes-incident-manager
-            -Dsonar.projectKey=Kubernetes-Incident-Manager_${{ inputs.image_name }}
-            -Dsonar.projectName=${{ inputs.image_name }}
-            -Dsonar.sources=.
-            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/.venv/**,**/__pycache__/**,**/tests/**
-            -Dsonar.python.version=${{ inputs.python_version }}
 
       - name: Snyk Scan (Node only)
         if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.detect_tech.outputs.tech == 'node' }}
