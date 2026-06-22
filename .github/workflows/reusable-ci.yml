@@ -167,21 +167,22 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-      - name: Setup Snyk CLI
-        if: ${{ steps.checks.outputs.run_snyk == 'true' }}
-        uses: snyk/actions/setup@master
-
       - name: Snyk Scan (Node dependencies)
         if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.detect_tech.outputs.tech == 'node' }}
-        run: snyk test
+        uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
 
       - name: Snyk Scan (Python dependencies)
         if: ${{ steps.checks.outputs.run_snyk == 'true' && steps.detect_tech.outputs.tech == 'python' }}
-        run: snyk test --skip-unresolved
+        uses: snyk/actions/python-3.8@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: test
+          args: --skip-unresolved
 
       # ----------------------------
       # Azure Login + ACR Login
