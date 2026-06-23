@@ -167,6 +167,12 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
+      - name: Sonar Quality Gate
+        if: ${{ steps.checks.outputs.run_sonar == 'true' }}
+        uses: SonarSource/sonarqube-quality-gate-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
       - name: Setup Snyk CLI
         if: ${{ steps.checks.outputs.run_snyk == 'true' }}
         uses: snyk/actions/setup@master
